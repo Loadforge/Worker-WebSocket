@@ -1,9 +1,11 @@
 use actix_web::{web, App, HttpServer};
+use dotenv::dotenv;
 mod models; 
 mod ws; 
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
     println!("Server started em ws://127.0.0.1:8080/ws");
 
     HttpServer::new(|| {
