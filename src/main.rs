@@ -6,7 +6,7 @@ mod ws;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    println!("Server started em ws://127.0.0.1:8080/ws");
+    println!("Server started in ws://127.0.0.1:8080/ws");
 
     HttpServer::new(|| {
         App::new()

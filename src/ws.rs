@@ -29,11 +29,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 match serde_json::from_str::<DslConfig>(&text) {
                     Ok(config) => {
                         let json = serde_json::to_string_pretty(&config)
-                            .unwrap_or_else(|_| "Erro ao serializar config".to_string());
-                        ctx.text(format!("Recebido:\n{}", json));
+                            .unwrap_or_else(|_| "Failed to serialize config".to_string());
+                        ctx.text(format!("Received:\n{}", json));
                     }
                     Err(_) => {
-                        ctx.text("Config inválida");
+                        ctx.text("Invalid config");
                     }
                 }
             }
