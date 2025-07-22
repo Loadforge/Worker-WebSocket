@@ -59,6 +59,7 @@ pub async fn ws_handler(req: HttpRequest, stream: web::Payload) -> Result<HttpRe
         })
         .collect();
 
+
     match query_params.get("token") {
         Some(token) if token == &expected_token => {
             ws::start(WsSession::new(), &req, stream)
