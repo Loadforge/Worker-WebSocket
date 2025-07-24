@@ -57,17 +57,43 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
             Ok(ws::Message::Text(text)) => {
                 match serde_json::from_str::<DslConfig>(&text) {
                     Ok(config) => {
+                        let (cpu_cores, total_mem_kb, free_mem_kb) = get_hardware_info();
+
                         match validate_config(&config) {
                             Ok(()) => {
-                                ctx.text("Config is valid");
+                                ctx.text(serde_json::json!({
+                                    "status": "start-config",
+                                    "config": {
+                                        "name": config.name,
+                                        "target": config.target,
+                                        "method": format!("{:?}", config.method),
+                                        "concurrency": config.concurrency,
+                                        "duration": config.duration,
+                                        "timeout_ms": config.timeout.unwrap_or_default(),
+                                        "auth": config.auth.as_ref().map(|a| format!("{:?}", a)).unwrap_or_else(|| "None".to_string()),
+                                        "body": config.body.as_ref().map(|b| format!("{:?}", b)),
+                                        "query_params": config.query_params,
+                                        "hardware_info": {
+                                            "cpu_cores": cpu_cores,
+                                            "total_ram_mb": total_mem_kb as f64 / 1024.0,
+                                            "free_ram_mb": free_mem_kb as f64 / 1024.0,
+                                        }
+                                    }
+                                }).to_string());
                             }
                             Err(err_msg) => {
-                                ctx.text(format!("Error: {}", err_msg));
+                                ctx.text(serde_json::json!({
+                                    "status": "error",
+                                    "message": err_msg
+                                }).to_string());
                             }
                         }
                     }
                     Err(_) => {
-                        ctx.text("Invalid config format");
+                        ctx.text(serde_json::json!({
+                            "status": "error",
+                            "message": "Invalid config format"
+                        }).to_string());
                     }
                 }
             }
