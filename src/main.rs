@@ -3,6 +3,7 @@ use dotenv::dotenv;
 mod models; 
 mod ws; 
 mod utils;
+mod client;
 
 
 #[actix_web::main]
