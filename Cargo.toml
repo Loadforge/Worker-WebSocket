@@ -14,5 +14,11 @@ log = "0.4"
 env_logger = "0.9"
 dotenv = "0.15"
 sysinfo = "0.36.1"
+hyper-tls = "0.5"
+hyper = { version = "0.14", features = ["client", "http1", "tcp"] }
+base64 = "0.21"
+url = "2.5.4"
+colored = "2"
+chrono = "0.4.41"
 
 

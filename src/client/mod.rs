@@ -6,38 +6,42 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use url::Url;
 use std::time::Instant;
-use colored::*;
 
 pub type HttpsClient = Client<HttpsConnector<hyper::client::HttpConnector>>;
 
 pub async fn send_request(
     client: &HttpsClient,
     config: &DslConfig,
-) -> Result<StatusCode, Box<dyn std::error::Error + Send + Sync>> {
-    let mut url = Url::parse(&config.target)?;
+) -> Result<(StatusCode, u128), (String, u128)> {
+    let mut url = Url::parse(&config.target).map_err(|e| (e.to_string(), 0))?;
 
     if let Some(params) = &config.query_params {
         let mut pairs = url.query_pairs_mut();
-        for (k, v) in params {
-            pairs.append_pair(k, v);
+        for (key, value) in params.iter() {
+            pairs.append_pair(key, value);
         }
     }
 
-    let uri: Uri = url.as_str().parse()?;
+    let uri: Uri = url.as_str()
+        .parse::<Uri>()
+        .map_err(|e| (e.to_string(), 0))?;
 
     let method = match config.method {
-        HttpMethod::GET => Method::GET,
-        HttpMethod::POST => Method::POST,
-        HttpMethod::PUT => Method::PUT,
-        HttpMethod::DELETE => Method::DELETE,
-        HttpMethod::PATCH => Method::PATCH,
-        HttpMethod::HEAD => Method::HEAD,
+        HttpMethod::GET     => Method::GET,
+        HttpMethod::POST    => Method::POST,
+        HttpMethod::PUT     => Method::PUT,
+        HttpMethod::DELETE  => Method::DELETE,
+        HttpMethod::PATCH   => Method::PATCH,
+        HttpMethod::HEAD    => Method::HEAD,
         HttpMethod::OPTIONS => Method::OPTIONS,
     };
 
     let body = match &config.body {
-        Some(Body::Json(value)) => HyperBody::from(serde_json::to_string(value)?),
-        Some(Body::Xml(s)) => HyperBody::from(s.clone()),
+        Some(Body::Json(json)) => {
+            let json_string = serde_json::to_string(json).map_err(|e| (e.to_string(), 0))?;
+            HyperBody::from(json_string)
+        }
+        Some(Body::Xml(xml)) => HyperBody::from(xml.clone()),
         None => HyperBody::empty(),
     };
 
@@ -45,10 +49,14 @@ pub async fn send_request(
         .method(method)
         .uri(uri.clone());
 
-    if let Some(Body::Json(_)) = &config.body {
-        req_builder = req_builder.header(CONTENT_TYPE, "application/json");
-    } else if let Some(Body::Xml(_)) = &config.body {
-        req_builder = req_builder.header(CONTENT_TYPE, "application/xml");
+    match &config.body {
+        Some(Body::Json(_)) => {
+            req_builder = req_builder.header(CONTENT_TYPE, "application/json");
+        }
+        Some(Body::Xml(_)) => {
+            req_builder = req_builder.header(CONTENT_TYPE, "application/xml");
+        }
+        None => {}
     }
 
     if let Some(auth) = &config.auth {
@@ -60,57 +68,34 @@ pub async fn send_request(
             Auth::Bearer { token } => {
                 req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
             }
-            Auth::ApiKey {
-                key_name,
-                key_value,
-                in_header,
-            } => {
-                if *in_header {
-                    req_builder = req_builder.header(key_name, key_value);
-                }
+            Auth::ApiKey { key_name, key_value, in_header: true } => {
+                req_builder = req_builder.header(key_name, key_value);
+            }
+            Auth::ApiKey { in_header: false, .. } => {
             }
             Auth::None => {}
         }
     }
 
-    let request = req_builder.body(body)?;
+    let request = req_builder.body(body).map_err(|e| (e.to_string(), 0))?;
 
     let start = Instant::now();
-    let result = client.request(request).await;
-    let duration = start.elapsed();
+    let response = client.request(request).await;
+    let duration = start.elapsed().as_millis();
 
-    match result {
-        Ok(response) => {
-            let status = response.status();
-            println!(
-                "{} {} {} {}",
-                "status :".green().bold(),
-                status.as_u16().to_string().bold(),
-                "| duration :".blue().bold(),
-                format!("{}ms", duration.as_millis()).bold(),
-            );
-            Ok(status) 
-        }
+    match response {
+        Ok(resp) => Ok((resp.status(), duration)),
         Err(e) => {
-            let error_reason = if e.is_connect() {
-                "Network Error (Connection refused or host unreachable)"
+            let msg = if e.is_connect() {
+                "Connection refused or host unreachable"
             } else if e.is_timeout() {
-                "Network Error (Timeout)"
+                "Timeout"
             } else if e.is_closed() {
-                "Network Error (Connection closed unexpectedly)"
+                "Connection closed unexpectedly"
             } else {
-                "Network Error (Unknown)"
+                "Unknown network error"
             };
-
-            eprintln!(
-                "{} {} {} {}",
-                "status :".red().bold(),
-                error_reason.red().bold(),
-                "| duration :".blue().bold(),
-                format!("{}ms", duration.as_millis()).bold(),
-            );
-
-            Err(Box::new(e)) 
+            Err((msg.to_string(), duration))
         }
     }
 }
