@@ -17,8 +17,14 @@ pub async fn send_request(
 
     if let Some(params) = &config.query_params {
         let mut pairs = url.query_pairs_mut();
-        for (key, value) in params.iter() {
+        for (key, value) in params {
             pairs.append_pair(key, value);
+        }
+    }
+
+    if let Some(Auth::ApiKey { key_name, key_value, add_to }) = &config.auth {
+        if add_to == "query" {
+            url.query_pairs_mut().append_pair(key_name, key_value);
         }
     }
 
@@ -61,6 +67,9 @@ pub async fn send_request(
 
     if let Some(auth) = &config.auth {
         match auth {
+            Auth::ApiKey { key_name, key_value, add_to } if add_to == "header" => {
+                req_builder = req_builder.header(key_name.as_str(), key_value.as_str());
+            }
             Auth::Basic { username, password } => {
                 let encoded = BASE64.encode(format!("{}:{}", username, password));
                 req_builder = req_builder.header(AUTHORIZATION, format!("Basic {}", encoded));
@@ -68,12 +77,13 @@ pub async fn send_request(
             Auth::Bearer { token } => {
                 req_builder = req_builder.header(AUTHORIZATION, format!("Bearer {}", token));
             }
-            Auth::ApiKey { key_name, key_value, in_header: true } => {
-                req_builder = req_builder.header(key_name, key_value);
-            }
-            Auth::ApiKey { in_header: false, .. } => {
-            }
-            Auth::None => {}
+            _ => {}
+        }
+    }
+
+    if let Some(custom_headers) = &config.headers {
+        for (key, value) in custom_headers {
+            req_builder = req_builder.header(key.as_str(), value.as_str());
         }
     }
 
