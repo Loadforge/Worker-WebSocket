@@ -20,6 +20,8 @@ use hyper::Client;
 use crate::client::{send_request, HttpsClient};
 use crate::models::metrics::Metrics;
 
+use std::sync::atomic::{AtomicUsize};
+
 pub struct WsSession {
     tx: Option<mpsc::UnboundedSender<String>>,
 }
@@ -29,12 +31,30 @@ impl WsSession {
         Self { tx: None }
     }
 }
+static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+const MAX_CONNECTIONS: usize = 1;
 
 impl Actor for WsSession {
     type Context = ws::WebsocketContext<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
-        println!("WebSocket connection started");
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let current = ACTIVE_CONNECTIONS.load(Ordering::SeqCst);
+
+        if current >= MAX_CONNECTIONS {
+            ctx.close(Some(ws::CloseReason {
+                code: ws::CloseCode::Policy,
+                description: Some("Maximum number of simultaneous connections reached".to_string()),
+            }));
+            ctx.stop();
+        } else {
+            let new_total = ACTIVE_CONNECTIONS.fetch_add(1, Ordering::SeqCst) + 1;
+            println!("WebSocket connection started, active connections: {}", new_total);
+        }
+    }
+
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
+        let new_total = ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
+        println!("WebSocket connection closed, active connections: {}", new_total);
     }
 }
 
@@ -161,6 +181,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                                         "duration_ms": elapsed,
                                                     });
                                                     let _ = tx.send(message.to_string());
+                                                    println!("Request successful: {} in {:.2} ms", status_code, elapsed);
 
                                                     let key = status_code.to_string();
                                                     *m.status_counts.entry(key).or_insert(0) += 1;
@@ -314,7 +335,11 @@ pub async fn ws_handler(req: HttpRequest, stream: web::Payload) -> Result<HttpRe
 
     match query_params.get("token") {
         Some(token) if token == &expected_token => {
-            ws::start(WsSession::new(), &req, stream)
+            if ACTIVE_CONNECTIONS.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                return Ok(HttpResponse::TooManyRequests().body("There is already an active WebSocket connection"));
+            }
+            let res = ws::start(WsSession::new(), &req, stream);
+            res
         }
         _ => Ok(HttpResponse::Unauthorized().finish()),
     }
