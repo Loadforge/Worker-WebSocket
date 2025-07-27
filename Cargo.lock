@@ -18,6 +18,7 @@ dependencies = [
  "hyper",
  "hyper-tls",
  "log",
+ "once_cell",
  "serde",
  "serde_json",
  "sysinfo",

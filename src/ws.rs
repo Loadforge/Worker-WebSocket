@@ -157,7 +157,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     let tx = tx.clone();
 
                                     let handle = task::spawn(async move {
-                                        while running.load(Ordering::Relaxed) && Instant::now() < end_time {
+                                        while running.load(Ordering::Relaxed) && Instant::now() < end_time &&  ACTIVE_CONNECTIONS.load(Ordering::SeqCst) > 0   {
                                             let result = send_request(&client, &config).await;
 
                                             match result {
@@ -181,7 +181,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                                         "duration_ms": elapsed,
                                                     });
                                                     let _ = tx.send(message.to_string());
-                                                    println!("Request successful: {} in {:.2} ms", status_code, elapsed);
 
                                                     let key = status_code.to_string();
                                                     *m.status_counts.entry(key).or_insert(0) += 1;
