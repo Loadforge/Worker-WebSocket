@@ -38,19 +38,25 @@ impl Actor for WsSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        let current = ACTIVE_CONNECTIONS.load(Ordering::SeqCst);
+    let current = ACTIVE_CONNECTIONS.load(Ordering::SeqCst);
 
-        if current >= MAX_CONNECTIONS {
-            ctx.close(Some(ws::CloseReason {
-                code: ws::CloseCode::Policy,
-                description: Some("Maximum number of simultaneous connections reached".to_string()),
-            }));
-            ctx.stop();
-        } else {
-            let new_total = ACTIVE_CONNECTIONS.fetch_add(1, Ordering::SeqCst) + 1;
-            println!("WebSocket connection started, active connections: {}", new_total);
-        }
+    if current >= MAX_CONNECTIONS {
+        ctx.close(Some(ws::CloseReason {
+            code: ws::CloseCode::Policy,
+            description: Some("Maximum number of simultaneous connections reached".to_string()),
+        }));
+        ctx.stop();
+    } else {
+        let new_total = ACTIVE_CONNECTIONS.fetch_add(1, Ordering::SeqCst) + 1;
+        println!("WebSocket connection started, active connections: {}", new_total);
+
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        self.tx = Some(tx.clone());
+
+        let stream = UnboundedReceiverStream::new(rx);
+        ctx.add_stream(stream);
     }
+}
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         let new_total = ACTIVE_CONNECTIONS.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
@@ -103,12 +109,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
 
                         match validate_config(&config) {
                             Ok(()) => {
-                                let (tx, rx) = mpsc::unbounded_channel::<String>();
-                                self.tx = Some(tx.clone());
-
-                                let stream = UnboundedReceiverStream::new(rx);
-                                ctx.add_stream(stream);
-
+                                let tx = match &self.tx {
+                                    Some(sender) => sender.clone(),
+                                    None => {
+                                        ctx.text(serde_json::json!({
+                                            "status": "error",
+                                            "message": "Canal interno não inicializado"
+                                        }).to_string());
+                                        return;
+                                    }
+                                };
+                               
                                 ctx.text(serde_json::json!({
                                     "status": "start-config",
                                     "config": {
@@ -133,6 +144,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 let client: HttpsClient = Client::builder().build::<_, hyper::Body>(https);
                                 let client = Arc::new(client);
                                 let config = Arc::new(config);
+                                
 
                                 let metrics = Arc::new(Mutex::new(Metrics {
                                     fastest_response: f64::MAX,
@@ -141,12 +153,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     ..Default::default()
                                 }));
 
+
                                 let response_times = Arc::new(Mutex::new(Vec::new()));
                                 let running = Arc::new(AtomicBool::new(true));
                                 let mut handles = Vec::new();
 
+
                                 let duration_secs = config.duration;
                                 let end_time = Instant::now() + Duration::from_secs(duration_secs);
+
 
                                 for _ in 0..config.concurrency {
                                     let client = Arc::clone(&client);
@@ -274,6 +289,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     });
 
                                     let _ = tx.send(final_metrics_msg.to_string());
+                                    
                                 });
                             }
                             Err(err_msg) => {
