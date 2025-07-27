@@ -24,11 +24,15 @@ use std::sync::atomic::{AtomicUsize};
 
 pub struct WsSession {
     tx: Option<mpsc::UnboundedSender<String>>,
+    running_test: Arc<AtomicBool>
 }
 
 impl WsSession {
     pub fn new() -> Self {
-        Self { tx: None }
+        Self {
+            tx: None,
+            running_test: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
@@ -105,6 +109,16 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
             Ok(ws::Message::Text(text)) => {
                 match serde_json::from_str::<DslConfig>(&text) {
                     Ok(config) => {
+                        if self.running_test.load(Ordering::SeqCst) {
+                            ctx.text(serde_json::json!({
+                                "status": "error",
+                                "message": "A test is already running. Please wait for it to finish before starting another."
+                            }).to_string());
+                            return;
+                        
+                        }
+                        self.running_test.store(true, Ordering::SeqCst);
+
                         let (cpu_cores, total_mem_kb, free_mem_kb) = get_hardware_info();
 
                         match validate_config(&config) {
@@ -114,7 +128,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     None => {
                                         ctx.text(serde_json::json!({
                                             "status": "error",
-                                            "message": "Canal interno não inicializado"
+                                            "message": "Internal channel not initialized"
                                         }).to_string());
                                         return;
                                     }
