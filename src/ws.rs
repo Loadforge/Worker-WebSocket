@@ -130,14 +130,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 }
                 match serde_json::from_str::<DslConfig>(&text) {
                     Ok(config) => {
-                        
+
                         if self.running_test.load(Ordering::SeqCst) {
                             ctx.text(serde_json::json!({
                                 "status": "error",
                                 "message": "A test is already running. Please wait for it to finish before starting another."
                             }).to_string());
                             return;
-                        
+
                         }
                         self.running_test.store(true, Ordering::SeqCst);
                         self.cancel_flag.store(false, Ordering::SeqCst);
@@ -156,7 +156,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                         return;
                                     }
                                 };
-                               
+
                                 ctx.text(serde_json::json!({
                                     "status": "start-config",
                                     "config": {
@@ -181,7 +181,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 let client: HttpsClient = Client::builder().build::<_, hyper::Body>(https);
                                 let client = Arc::new(client);
                                 let config = Arc::new(config);
-                                
+
 
                                 let metrics = Arc::new(Mutex::new(Metrics {
                                     fastest_response: f64::MAX,
@@ -294,12 +294,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
 
                                     loop {
                                         if cancel_flag.load(Ordering::SeqCst) {
-                                            println!("⚠️ Teste abortado por solicitação.");
                                             break;
                                         }
 
                                         if start_time.elapsed() >= Duration::from_secs(duration_secs) {
-                                            println!("✅ Teste finalizado normalmente.");
                                             break;
                                         }
 
