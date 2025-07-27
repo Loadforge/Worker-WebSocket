@@ -24,7 +24,8 @@ use std::sync::atomic::{AtomicUsize};
 
 pub struct WsSession {
     tx: Option<mpsc::UnboundedSender<String>>,
-    running_test: Arc<AtomicBool>
+    running_test: Arc<AtomicBool>,
+    cancel_flag: Arc<AtomicBool>,
 }
 
 impl WsSession {
@@ -32,6 +33,7 @@ impl WsSession {
         Self {
             tx: None,
             running_test: Arc::new(AtomicBool::new(false)),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -107,8 +109,28 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(ws::Message::Text(text)) => {
+               let trimmed = text.trim();
+                let unquoted = trimmed.trim_matches('"');
+
+                if unquoted == "abort" {
+                    if self.running_test.load(Ordering::SeqCst) {
+                        self.cancel_flag.store(true, Ordering::SeqCst);
+
+                        ctx.text(serde_json::json!({
+                            "status": "aborting",
+                            "message": "Abortando teste..."
+                        }).to_string());
+                    } else {
+                        ctx.text(serde_json::json!({
+                            "status": "error",
+                            "message": "Nenhum teste em execução para abortar"
+                        }).to_string());
+                    }
+                    return;
+                }
                 match serde_json::from_str::<DslConfig>(&text) {
                     Ok(config) => {
+                        
                         if self.running_test.load(Ordering::SeqCst) {
                             ctx.text(serde_json::json!({
                                 "status": "error",
@@ -118,6 +140,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         
                         }
                         self.running_test.store(true, Ordering::SeqCst);
+                        self.cancel_flag.store(false, Ordering::SeqCst);
 
                         let (cpu_cores, total_mem_kb, free_mem_kb) = get_hardware_info();
 
@@ -182,11 +205,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     let config = Arc::clone(&config);
                                     let metrics = Arc::clone(&metrics);
                                     let response_times = Arc::clone(&response_times);
+                                    let cancel_flag = self.cancel_flag.clone();
                                     let running = Arc::clone(&running);
                                     let tx = tx.clone();
 
                                     let handle = task::spawn(async move {
-                                        while running.load(Ordering::Relaxed) && Instant::now() < end_time &&  ACTIVE_CONNECTIONS.load(Ordering::SeqCst) > 0   {
+                                        while running.load(Ordering::Relaxed) && Instant::now() < end_time &&  ACTIVE_CONNECTIONS.load(Ordering::SeqCst) > 0 && !cancel_flag.load(Ordering::SeqCst)  {
                                             let result = send_request(&client, &config).await;
 
                                             match result {
@@ -262,8 +286,26 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 let response_times = Arc::clone(&response_times);
                                 let config = Arc::clone(&config);
 
+                                let cancel_flag = Arc::clone(&self.cancel_flag);
+                                let running = Arc::clone(&self.running_test);
+
                                 task::spawn(async move {
-                                    sleep(Duration::from_secs(duration_secs)).await;
+                                    let start_time = tokio::time::Instant::now();
+
+                                    loop {
+                                        if cancel_flag.load(Ordering::SeqCst) {
+                                            println!("⚠️ Teste abortado por solicitação.");
+                                            break;
+                                        }
+
+                                        if start_time.elapsed() >= Duration::from_secs(duration_secs) {
+                                            println!("✅ Teste finalizado normalmente.");
+                                            break;
+                                        }
+
+                                        sleep(Duration::from_millis(200)).await;
+                                    }
+
                                     running.store(false, Ordering::Relaxed);
 
                                     for handle in handles {
@@ -274,19 +316,23 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     let response_times = response_times.lock().unwrap();
 
                                     let median = calculate_median(&response_times);
-                                    let total_time_secs = duration_secs as f64;
-                                    let throughput = final_metrics.total_requests as f64 / total_time_secs;
+                                    let elapsed_secs = start_time.elapsed().as_secs_f64();
+                                    let throughput = if elapsed_secs > 0.0 {
+                                        final_metrics.total_requests as f64 / elapsed_secs
+                                    } else {
+                                        0.0
+                                    };
 
                                     final_metrics.target_url = config.target.clone();
                                     final_metrics.http_method = format!("{:?}", config.method);
-                                    final_metrics.duration_secs = config.duration;
+                                    final_metrics.duration_secs = elapsed_secs as u64;
                                     final_metrics.concurrency = config.concurrency;
                                     final_metrics.throughput = throughput;
                                     final_metrics.median_response_time = median;
                                     final_metrics.timestamp = Local::now().format("%Y/%m/%d %H:%M:%S").to_string();
 
                                     let final_metrics_msg = serde_json::json!({
-                                        "status": "final_metrics",
+                                        "status": if cancel_flag.load(Ordering::SeqCst) { "aborted" } else { "final_metrics" },
                                         "target_url": final_metrics.target_url,
                                         "http_method": final_metrics.http_method,
                                         "duration_secs": final_metrics.duration_secs,
@@ -303,7 +349,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     });
 
                                     let _ = tx.send(final_metrics_msg.to_string());
-                                    
                                 });
                             }
                             Err(err_msg) => {
