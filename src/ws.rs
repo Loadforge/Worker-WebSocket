@@ -130,8 +130,9 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                 }
                 match serde_json::from_str::<DslConfig>(&text) {
                     Ok(config) => {
-
-                        if self.running_test.load(Ordering::SeqCst) {
+                        match validate_config(&config) {
+                            Ok(()) => {
+                                if self.running_test.load(Ordering::SeqCst) {
                             ctx.text(serde_json::json!({
                                 "status": "error",
                                 "message": "A test is already running. Please wait for it to finish before starting another."
@@ -143,9 +144,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                         self.cancel_flag.store(false, Ordering::SeqCst);
 
                         let (cpu_cores, total_mem_kb, free_mem_kb) = get_hardware_info();
-
-                        match validate_config(&config) {
-                            Ok(()) => {
                                 let tx = match &self.tx {
                                     Some(sender) => sender.clone(),
                                     None => {
