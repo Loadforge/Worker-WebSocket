@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DslConfig {
+    pub request_id: String,
     pub name: String,
     pub target: String,
     pub method: HttpMethod,

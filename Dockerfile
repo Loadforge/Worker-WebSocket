@@ -3,12 +3,14 @@ FROM rust:1.86 as builder
 WORKDIR /app
 COPY . .
 
-RUN apt-get update && apt-get install -y pkg-config libssl-dev
-RUN cargo build --release
+RUN apt-get update && apt-get install -y pkg-config libssl-dev \
+ && cargo build --release \
+ && rm -rf /var/lib/apt/lists/*
 
-FROM ubuntu:22.04
+FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && apt-get clean
+RUN apt-get update && apt-get install -y ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/Worker-Web ./Worker-Web

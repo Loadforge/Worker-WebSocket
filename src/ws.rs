@@ -160,6 +160,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                 ctx.text(serde_json::json!({
                                     "status": "start-config",
                                     "config": {
+                                        "request_id": config.request_id,
                                         "name": config.name,
                                         "target": config.target,
                                         "method": format!("{:?}", config.method),
@@ -229,6 +230,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
 
                                                     let status_code = status.as_u16();
                                                     let message = serde_json::json!({
+                                                        "request_id": config.request_id,
                                                         "status": "process",
                                                         "http_status": status_code,
                                                         "duration_ms": elapsed,
@@ -259,6 +261,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                                     m.total_duration += elapsed;
 
                                                     let message = serde_json::json!({
+                                                        "request_id": config.request_id,
                                                         "status": "process",
                                                         "http_status": "REQUEST_ERROR",
                                                         "error": err_msg,
@@ -332,6 +335,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
                                     let final_metrics_msg = serde_json::json!({
                                         "status": if cancel_flag.load(Ordering::SeqCst) { "aborted" } else { "final_metrics" },
                                         "target_url": final_metrics.target_url,
+                                        "request_id": config.request_id,
                                         "http_method": final_metrics.http_method,
                                         "duration_secs": final_metrics.duration_secs,
                                         "concurrency": final_metrics.concurrency,
